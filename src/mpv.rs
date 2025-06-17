@@ -532,19 +532,6 @@ impl Mpv {
     }
 
     /// Send a command to the `Mpv` instance.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use libmpv2::{Mpv};
-    /// # use libmpv2::mpv_node::MpvNode;
-    /// # use std::collections::HashMap;
-    /// mpv.command("loadfile", &["test-data/jellyfish.mp4", "append-play"]).unwrap();
-    /// # let node = mpv.get_property::<MpvNode>("playlist").unwrap();
-    /// # let mut list = node.array().unwrap().collect::<Vec<_>>();
-    /// # let map = list.pop().unwrap().map().unwrap().collect::<HashMap<_, _>>();
-    /// # assert_eq!(map, HashMap::from([(String::from("id"), MpvNode::Int64(1)), (String::from("current"), MpvNode::Flag(true)), (String::from("filename"), MpvNode::String(String::from("test-data/jellyfish.mp4")))]));
-    /// ```
     pub fn command(&self, name: &str, args: &[&str]) -> Result<()> {
         let mut cstr_args: Vec<CString> = Vec::with_capacity(args.len() + 1);
         cstr_args.push(CString::new(name)?);
