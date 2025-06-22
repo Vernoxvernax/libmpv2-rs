@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Expose `mpv_render_context_report_swap` @tymmesyde
+
+## Version 4.1.0
+
+- Expose `mpv_render_context_update` @ianhattendorf
+- Fixed signed chars causing compilation issues on aarch64 @ianhattendorf
+
+## Version 4.0.0
+
+- [breaking] Removed all command helpers. Use `mpv.command` directly instead.
+- [breaking] Removed `MpvNode.value()` and `MpvNodeValue`. Use `MpvNode` directly
+- [breaking] Moved `libmpv2::MpvNode` to `libmpv2::mpv_node::MpvNode`
+- [breaking] Changed `MpvNode.to_f64()`, `.to_bool()`, ... to `MpvNode.f64()`, .`bool()`, ...
+- [breaking] `MpvNode.array()` and `MpvNode.map()` now own `self`
+- `MpvNode` now implements `Eq`
+
 ## Version 3.0.0
 
 - [breaking] Support libmpv version 2.0 (mpv version 0.35.0). Mpv versions <= 0.34.0 will no longer be supported.
