@@ -1,6 +1,6 @@
-use libmpv2::{events::*, mpv_node::MpvNode, *};
-
-use std::{collections::HashMap, env, thread, time::Duration};
+use libmpv2::{events::*, *};
+use serde_json::Value;
+use std::{env, thread, time::Duration};
 
 const VIDEO_URL: &str = "https://www.youtube.com/watch?v=VLnWf1sQkjY";
 
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     let mut ev_ctx = EventContext::new(mpv.ctx);
     ev_ctx.disable_deprecated_events()?;
     ev_ctx.observe_property("volume", Format::Int64, 0)?;
-    ev_ctx.observe_property("demuxer-cache-state", Format::Node, 0)?;
+    ev_ctx.observe_property("demuxer-cache-state", Format::String, 0)?;
 
     crossbeam::scope(|scope| {
         scope.spawn(|_| {
@@ -46,10 +46,10 @@ fn main() -> Result<()> {
 
                 Ok(Event::PropertyChange {
                     name: "demuxer-cache-state",
-                    change: PropertyData::Node(mpv_node),
+                    change: PropertyData::Str(r),
                     ..
                 }) => {
-                    let ranges = seekable_ranges(mpv_node);
+                    let ranges = seekable_ranges(r);
                     println!("Seekable ranges updated: {:?}", ranges);
                 }
                 Ok(e) => println!("Event triggered: {:?}", e),
@@ -61,22 +61,16 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn seekable_ranges(demuxer_cache_state: MpvNode) -> Vec<(f64, f64)> {
+fn seekable_ranges(demuxer_cache_state: &str) -> Vec<(f64, f64)> {
     let mut res = Vec::new();
-    let props = demuxer_cache_state
-        .map()
-        .unwrap()
-        .collect::<HashMap<_, _>>();
-    let ranges = props
-        .get("seekable-ranges")
-        .unwrap()
-        .clone()
-        .array()
-        .unwrap();
-    for node in ranges {
-        let range = node.map().unwrap().collect::<HashMap<_, _>>();
-        let start = range.get("start").unwrap().f64().unwrap();
-        let end = range.get("end").unwrap().f64().unwrap();
+
+    let v: Value = serde_json::from_str(demuxer_cache_state).unwrap();
+    let ranges = v["seekable-ranges"].as_array().unwrap();
+
+    for val in ranges {
+        let range = val.as_object().unwrap();
+        let start = range.get("start").unwrap().as_f64().unwrap();
+        let end = range.get("end").unwrap().as_f64().unwrap();
         res.push((start, end));
     }
     res

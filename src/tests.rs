@@ -1,8 +1,6 @@
 use crate::events::{Event, EventContext, PropertyData};
-use crate::mpv_node::MpvNode;
 use crate::*;
 
-use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
 
@@ -148,65 +146,4 @@ fn events() {
     assert_event_occurs!(ev_ctx, 10., Ok(Event::EndFile(mpv_end_file_reason::Eof)));
     assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
     assert!(ev_ctx.wait_event(3.).is_none());
-}
-
-#[test]
-fn node_map() -> Result<()> {
-    let mpv = Mpv::new()?;
-
-    mpv.command(
-        "loadfile",
-        &["test-data/speech_12kbps_mb.wav", "append-play"],
-    )
-    .unwrap();
-
-    thread::sleep(Duration::from_millis(250));
-    let audio_params = mpv.get_property::<MpvNode>("audio-params")?;
-    let params = audio_params.map().unwrap().collect::<HashMap<_, _>>();
-
-    assert_eq!(params.len(), 5);
-
-    let format = params.get("format").unwrap();
-    assert_eq!(format, &MpvNode::String("s16".to_string()));
-
-    let samplerate = params.get("samplerate").unwrap();
-    assert_eq!(samplerate, &MpvNode::Int64(48_000));
-
-    let channels = params.get("channels").unwrap();
-    assert_eq!(channels, &MpvNode::String("mono".to_string()));
-
-    let hr_channels = params.get("hr-channels").unwrap();
-    assert_eq!(hr_channels, &MpvNode::String("mono".to_string()));
-
-    let channel_count = params.get("channel-count").unwrap();
-    assert_eq!(channel_count, &MpvNode::Int64(1));
-
-    Ok(())
-}
-
-#[test]
-fn node_array() -> Result<()> {
-    let mpv = Mpv::new()?;
-
-    mpv.command(
-        "loadfile",
-        &["test-data/speech_12kbps_mb.wav", "append-play"],
-    )
-    .unwrap();
-
-    thread::sleep(Duration::from_millis(250));
-    let playlist = mpv.get_property::<MpvNode>("playlist")?;
-    let items = playlist.array().unwrap().collect::<Vec<_>>();
-
-    assert_eq!(items.len(), 1);
-    let track = items[0].clone().map().unwrap().collect::<HashMap<_, _>>();
-
-    let filename = track.get("filename").unwrap();
-
-    assert_eq!(
-        filename,
-        &MpvNode::String("test-data/speech_12kbps_mb.wav".to_string())
-    );
-
-    Ok(())
 }

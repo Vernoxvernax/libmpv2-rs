@@ -1,4 +1,3 @@
-use crate::mpv_node::sys_node::SysMpvNode;
 use crate::{mpv::mpv_err, *};
 
 use std::ffi::{c_void, CString};
@@ -9,7 +8,6 @@ use std::slice;
 /// An `Event`'s ID.
 pub use libmpv2_sys::mpv_event_id as EventId;
 
-use self::mpv_node::MpvNode;
 pub mod mpv_event_id {
     pub use libmpv2_sys::mpv_event_id_MPV_EVENT_AUDIO_RECONFIG as AudioReconfig;
     pub use libmpv2_sys::mpv_event_id_MPV_EVENT_CLIENT_MESSAGE as ClientMessage;
@@ -39,7 +37,6 @@ pub enum PropertyData<'a> {
     Flag(bool),
     Int64(i64),
     Double(ctype::c_double),
-    Node(MpvNode),
 }
 
 impl<'a> PropertyData<'a> {
@@ -59,11 +56,6 @@ impl<'a> PropertyData<'a> {
             }
             mpv_format::Double => Ok(PropertyData::Double(*(ptr as *mut f64))),
             mpv_format::Int64 => Ok(PropertyData::Int64(*(ptr as *mut i64))),
-            mpv_format::Node => {
-                let sys_node = *(ptr as *mut libmpv2_sys::mpv_node);
-                let node = SysMpvNode::new(sys_node, false);
-                return Ok(PropertyData::Node(node.value().unwrap()));
-            }
             mpv_format::None => unreachable!(),
             _ => unimplemented!(),
         }
@@ -204,7 +196,7 @@ impl EventContext {
     /// Returns `Some(Err(...))` if there was invalid utf-8, or if either an
     /// `MPV_EVENT_GET_PROPERTY_REPLY`, `MPV_EVENT_SET_PROPERTY_REPLY`, `MPV_EVENT_COMMAND_REPLY`,
     /// or `MPV_EVENT_PROPERTY_CHANGE` event failed, or if `MPV_EVENT_END_FILE` reported an error.
-    pub fn wait_event(&mut self, timeout: f64) -> Option<Result<Event>> {
+    pub fn wait_event(&mut self, timeout: f64) -> Option<Result<Event<'_>>> {
         let event = unsafe { *libmpv2_sys::mpv_wait_event(self.ctx.as_ptr(), timeout) };
         if event.event_id != mpv_event_id::None {
             if let Err(e) = mpv_err((), event.error) {

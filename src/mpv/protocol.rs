@@ -14,7 +14,7 @@ impl Mpv {
     ///
     /// # Panics
     /// Panics if a context already exists
-    pub fn create_protocol_context<T, U>(&self) -> ProtocolContext<T, U>
+    pub fn create_protocol_context<T, U>(&self) -> ProtocolContext<'_, T, U>
     where
         T: RefUnwindSafe,
         U: RefUnwindSafe,
