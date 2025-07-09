@@ -1,13 +1,12 @@
 use super::*;
 
 use std::alloc::{self, Layout};
-use std::marker::PhantomData;
 use std::mem;
 use std::os::raw as ctype;
 use std::panic;
 use std::panic::RefUnwindSafe;
 use std::slice;
-use std::sync::{atomic::Ordering, Mutex};
+use std::sync::{Mutex, atomic::Ordering};
 
 impl Mpv {
     /// Create a context with which custom protocols can be registered.
@@ -25,7 +24,7 @@ impl Mpv {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            Ok(_) => ProtocolContext::new(self.ctx, PhantomData::<&Self>),
+            Ok(_) => ProtocolContext::new(self),
             Err(_) => panic!("A protocol context already exists"),
         }
     }
@@ -55,13 +54,15 @@ where
 {
     let data = user_data as *mut ProtocolData<T, U>;
 
-    (*info).cookie = user_data;
-    (*info).read_fn = Some(read_wrapper::<T, U>);
-    (*info).seek_fn = Some(seek_wrapper::<T, U>);
-    (*info).size_fn = Some(size_wrapper::<T, U>);
-    (*info).close_fn = Some(close_wrapper::<T, U>);
+    unsafe {
+        (*info).cookie = user_data;
+        (*info).read_fn = Some(read_wrapper::<T, U>);
+        (*info).seek_fn = Some(seek_wrapper::<T, U>);
+        (*info).size_fn = Some(size_wrapper::<T, U>);
+        (*info).close_fn = Some(close_wrapper::<T, U>);
+    }
 
-    let ret = panic::catch_unwind(|| {
+    let ret = panic::catch_unwind(|| unsafe {
         let uri = mpv_cstr_to_str!(uri as *const _).unwrap();
         ptr::write(
             (*data).cookie,
@@ -87,15 +88,11 @@ where
 {
     let data = cookie as *mut ProtocolData<T, U>;
 
-    let ret = panic::catch_unwind(|| {
+    let ret = panic::catch_unwind(|| unsafe {
         let slice = slice::from_raw_parts_mut(buf, nbytes as _);
         ((*data).read_fn)(&mut *(*data).cookie, slice)
     });
-    if let Ok(ret) = ret {
-        ret
-    } else {
-        -1
-    }
+    if let Ok(ret) = ret { ret } else { -1 }
 }
 
 unsafe extern "C" fn seek_wrapper<T, U>(cookie: *mut ctype::c_void, offset: i64) -> i64
@@ -105,12 +102,13 @@ where
 {
     let data = cookie as *mut ProtocolData<T, U>;
 
-    if (*data).seek_fn.is_none() {
+    if unsafe { (*data).seek_fn.is_none() } {
         return mpv_error::Unsupported as _;
     }
 
-    let ret =
-        panic::catch_unwind(|| (*(*data).seek_fn.as_ref().unwrap())(&mut *(*data).cookie, offset));
+    let ret = panic::catch_unwind(|| unsafe {
+        (*(*data).seek_fn.as_ref().unwrap())(&mut *(*data).cookie, offset)
+    });
     if let Ok(ret) = ret {
         ret
     } else {
@@ -125,11 +123,13 @@ where
 {
     let data = cookie as *mut ProtocolData<T, U>;
 
-    if (*data).size_fn.is_none() {
+    if unsafe { (*data).size_fn.is_none() } {
         return mpv_error::Unsupported as _;
     }
 
-    let ret = panic::catch_unwind(|| (*(*data).size_fn.as_ref().unwrap())(&mut *(*data).cookie));
+    let ret = panic::catch_unwind(|| unsafe {
+        (*(*data).size_fn.as_ref().unwrap())(&mut *(*data).cookie)
+    });
     if let Ok(ret) = ret {
         ret
     } else {
@@ -143,9 +143,9 @@ where
     T: RefUnwindSafe,
     U: RefUnwindSafe,
 {
-    let data = Box::from_raw(cookie as *mut ProtocolData<T, U>);
+    let data = unsafe { Box::from_raw(cookie as *mut ProtocolData<T, U>) };
 
-    panic::catch_unwind(|| ((*data).close_fn)(Box::from_raw((*data).cookie)));
+    panic::catch_unwind(|| ((*data).close_fn)(unsafe { Box::from_raw((*data).cookie) }));
 }
 
 struct ProtocolData<T, U> {
@@ -162,23 +162,18 @@ struct ProtocolData<T, U> {
 /// This context holds state relevant to custom protocols.
 /// It is created by calling `Mpv::create_protocol_context`.
 pub struct ProtocolContext<'parent, T: RefUnwindSafe, U: RefUnwindSafe> {
-    ctx: NonNull<libmpv2_sys::mpv_handle>,
+    mpv: &'parent Mpv,
     protocols: Mutex<Vec<Protocol<T, U>>>,
-    _does_not_outlive: PhantomData<&'parent Mpv>,
 }
 
 unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Send for ProtocolContext<'parent, T, U> {}
 unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Sync for ProtocolContext<'parent, T, U> {}
 
 impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> ProtocolContext<'parent, T, U> {
-    fn new(
-        ctx: NonNull<libmpv2_sys::mpv_handle>,
-        marker: PhantomData<&'parent Mpv>,
-    ) -> ProtocolContext<'parent, T, U> {
+    fn new(mpv: &'parent Mpv) -> ProtocolContext<'parent, T, U> {
         ProtocolContext {
-            ctx,
+            mpv,
             protocols: Mutex::new(Vec::new()),
-            _does_not_outlive: marker,
         }
     }
 
@@ -189,7 +184,7 @@ impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> ProtocolContext<'parent, T, U>
     /// already been registered.
     pub fn register(&self, protocol: Protocol<T, U>) -> Result<()> {
         let mut protocols = self.protocols.lock().unwrap();
-        protocol.register(self.ctx.as_ptr())?;
+        protocol.register(self.mpv.ctx.as_ptr())?;
         protocols.push(protocol);
         Ok(())
     }
@@ -219,7 +214,7 @@ impl<T: RefUnwindSafe, U: RefUnwindSafe> Protocol<T, U> {
         size_fn: Option<StreamSize<T>>,
     ) -> Protocol<T, U> {
         let c_layout = Layout::from_size_align(mem::size_of::<T>(), mem::align_of::<T>()).unwrap();
-        let cookie = alloc::alloc(c_layout) as *mut T;
+        let cookie = unsafe { alloc::alloc(c_layout) as *mut T };
         let data = Box::into_raw(Box::new(ProtocolData {
             cookie,
             user_data,

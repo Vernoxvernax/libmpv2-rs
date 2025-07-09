@@ -1,6 +1,6 @@
-use crate::{mpv::mpv_err, Error, Result};
+use crate::{Error, Result, mpv::mpv_err};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{CStr, c_char, c_void};
 use std::os::raw::c_int;
 use std::ptr;
 
@@ -125,10 +125,10 @@ unsafe extern "C" fn gpa_wrapper<GLContext>(ctx: *mut c_void, name: *const c_cha
     }
 
     let params: *mut OpenGLInitParams<GLContext> = ctx as _;
-    let params = &*params;
+    let params = unsafe { &*params };
     (params.get_proc_address)(
         &params.ctx,
-        CStr::from_ptr(name)
+        unsafe { CStr::from_ptr(name) }
             .to_str()
             .expect("Could not convert function name to str"),
     )
@@ -139,7 +139,7 @@ unsafe extern "C" fn ru_wrapper<F: Fn() + Send + 'static>(ctx: *mut c_void) {
         panic!("ctx for render_update wrapper is NULL");
     }
 
-    (*(ctx as *mut F))();
+    unsafe { (*(ctx as *mut F))() };
 }
 
 impl<C> From<OpenGLInitParams<C>> for libmpv2_sys::mpv_opengl_init_params {
@@ -192,14 +192,12 @@ impl<C> From<RenderParam<C>> for libmpv2_sys::mpv_render_param {
 }
 
 unsafe fn free_void_data<T>(ptr: *mut c_void) {
-    drop(Box::<T>::from_raw(ptr as *mut T));
+    drop(unsafe { Box::<T>::from_raw(ptr as *mut T) });
 }
 
 unsafe fn free_init_params<C>(ptr: *mut c_void) {
-    let params = Box::from_raw(ptr as *mut libmpv2_sys::mpv_opengl_init_params);
-    drop(Box::from_raw(
-        params.get_proc_address_ctx as *mut OpenGLInitParams<C>,
-    ));
+    let params = unsafe { Box::from_raw(ptr as *mut libmpv2_sys::mpv_opengl_init_params) };
+    drop(unsafe { Box::from_raw(params.get_proc_address_ctx as *mut OpenGLInitParams<C>) });
 }
 
 impl RenderContext {
@@ -370,9 +368,7 @@ impl RenderContext {
     ///
     /// If this is called while no video is initialized, it is ignored.
     pub fn report_swap(&self) {
-        unsafe {
-            libmpv2_sys::mpv_render_context_report_swap(self.ctx)
-        }
+        unsafe { libmpv2_sys::mpv_render_context_report_swap(self.ctx) }
     }
 
     /// Set the callback that notifies you when a new video frame is available, or if the video display

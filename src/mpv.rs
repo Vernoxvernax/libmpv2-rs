@@ -18,7 +18,6 @@ pub mod protocol;
 pub mod render;
 
 pub use self::errors::*;
-use self::events::EventContext;
 use super::*;
 
 use std::{
@@ -197,7 +196,13 @@ pub struct MpvInitializer {
 }
 
 impl MpvInitializer {
-    /// Set the value of a property.
+    /// Set a property to a given value. Properties are essentially variables which
+    /// can be queried or set at runtime. For example, writing to the pause property
+    /// will actually pause or unpause playback.
+    ///
+    /// Will return `Err` If the format `T` doesn't match with the internal format of
+    /// the property and it also fails to convert to `T` or if setting properties not
+    /// backed by options.
     pub fn set_property<T: SetData>(&self, name: &str, data: T) -> Result<()> {
         let name = CString::new(name)?;
         let format = T::get_format().as_mpv_format() as _;
@@ -218,13 +223,27 @@ impl MpvInitializer {
             })
         })
     }
+
+    /// Load a config file. This loads and parses the file, and sets every entry in
+    /// the config file's default section as if MpvInitializer::set_option() is called.
+    ///
+    /// The filename should be an absolute path. If it isn't, the actual path used
+    /// is unspecified.
+    ///
+    /// Will return `Err` if the file wasn't found or if a fatal error happens when
+    /// parsing a config file.
+    pub fn load_config(&self, path: &str) -> Result<()> {
+        let file = CString::new(path)?;
+        mpv_err((), unsafe {
+            libmpv2_sys::mpv_load_config_file(self.ctx, file.as_ptr())
+        })
+    }
 }
 
 /// The central mpv context.
 pub struct Mpv {
     /// The handle to the mpv core
     pub ctx: NonNull<libmpv2_sys::mpv_handle>,
-    event_context: EventContext,
     #[cfg(feature = "protocols")]
     protocols_guard: AtomicBool,
 }
@@ -241,14 +260,73 @@ impl Drop for Mpv {
 }
 
 impl Mpv {
-    /// Create a new `Mpv`.
-    /// The default settings can be probed by running: `$ mpv --show-profile=libmpv`.
+    /// Create and initialize a new `Mpv` instance with default options. Use
+    /// [`with_initializer`](Mpv::with_initializer) instead if you want to
+    /// set options.
+    ///
+    /// Unlike the command line player, this will have initial settings suitable
+    /// for embedding in applications. The following settings are different:
+    /// - stdin/stdout/stderr and the terminal will never be accessed. This is
+    ///   equivalent to setting the --no-terminal option.
+    ///   (Technically, this also suppresses C signal handling.)
+    /// - No config files will be loaded. This is roughly equivalent to using
+    ///   --config=no. You can re-enable this option, which will make libmpv
+    ///   load config files during mpv_initialize(). If you do this, you are
+    ///   strongly encouraged to set the "config-dir" option too.
+    ///   (Otherwise it will load the mpv command line player's config.)
+    ///
+    /// For example:
+    /// ```
+    /// # use libmpv2::Mpv;
+    /// Mpv::with_initializer(|init| {
+    ///     init.set_option("config-dir", "my-path")?;
+    ///     init.set_option("config", "yes")?;
+    ///     Ok(())
+    /// });
+    /// ```
+    ///
+    /// - Idle mode is enabled, which means the playback core will enter idle
+    ///   mode if there are no more files to play on the internal playlist,
+    ///   instead of exiting. This is equivalent to the --idle option.
+    /// - Disable parts of input handling.
+    /// - Most of the different settings can be viewed with the command line
+    ///   player by running "mpv --show-profile=libmpv".
+    ///
+    /// All this assumes that API users want a mpv instance that is strictly
+    /// isolated from the command line player's configuration, user settings,
+    /// and so on. You can re-enable disabled features by setting the
+    /// appropriate options.
+    ///
+    /// The mpv command line parser is not available through this API, but you
+    /// can set individual options with
+    /// [`set_property`](Mpv::set_property). Files for playback must be
+    /// loaded with [`command`](Mpv::command) or others.
+    ///
+    /// Note that you should avoid doing concurrent accesses on the
+    /// uninitialized `Mpv` instance. (Whether concurrent access is definitely
+    /// allowed or not has yet to be decided.)
+    ///
+    /// Will return `Err` if out of memory or LC_NUMERIC is not set to "C".
     pub fn new() -> Result<Mpv> {
         Mpv::with_initializer(|_| Ok(()))
     }
 
-    /// Create a new `Mpv`.
-    /// The same as `Mpv::new`, but you can set properties before `Mpv` is initialized.
+    /// Create and initialize a new `Mpv` instance with options set by the
+    /// `initializer`.
+    ///
+    /// The following options can't be set after initialization:
+    /// 1. options which are only read at initialization time:
+    ///     - config
+    ///     - config-dir
+    ///     - input-conf
+    ///     - load-scripts
+    ///     - script
+    ///     - player-operation-mode
+    ///     - input-app-events (OSX)
+    /// 2. all encoding mode options
+    ///
+    /// Will return `Err` if out of memory or LC_NUMERIC is not set to "C" or
+    /// `initializer` fails.
     pub fn with_initializer<F: FnOnce(MpvInitializer) -> Result<()>>(
         initializer: F,
     ) -> Result<Mpv> {
@@ -275,33 +353,13 @@ impl Mpv {
 
         Ok(Mpv {
             ctx,
-            event_context: EventContext::new(ctx),
             #[cfg(feature = "protocols")]
             protocols_guard: AtomicBool::new(false),
         })
     }
 
-    /// Load a configuration file. The path has to be absolute, and a file.
-    pub fn load_config(&self, path: &str) -> Result<()> {
-        let file = CString::new(path)?.into_raw();
-        let ret = mpv_err((), unsafe {
-            libmpv2_sys::mpv_load_config_file(self.ctx.as_ptr(), file)
-        });
-        unsafe {
-            drop(CString::from_raw(file));
-        };
-        ret
-    }
-
-    pub fn event_context(&self) -> &EventContext {
-        &self.event_context
-    }
-
-    pub fn event_context_mut(&mut self) -> &mut EventContext {
-        &mut self.event_context
-    }
-
-    /// Send a command to the `Mpv` instance.
+    /// Send a command to the player. Commands are the same as those used in
+    /// input.conf.
     pub fn command(&self, name: &str, args: &[&str]) -> Result<()> {
         let mut cstr_args: Vec<CString> = Vec::with_capacity(args.len() + 1);
         cstr_args.push(CString::new(name)?);
@@ -318,7 +376,12 @@ impl Mpv {
         })
     }
 
-    /// Set the value of a property.
+    /// Set a property to a given value. Properties are essentially variables which
+    /// can be queried or set at runtime. For example, writing to the pause property
+    /// will actually pause or unpause playback.
+    ///
+    /// Will return `Err` If the format `T` doesn't match with the internal format of
+    /// the property and it also fails to convert to `T`.
     pub fn set_property<T: SetData>(&self, name: &str, data: T) -> Result<()> {
         let name = CString::new(name)?;
         let format = T::get_format().as_mpv_format() as _;
@@ -329,7 +392,11 @@ impl Mpv {
         })
     }
 
-    /// Get the value of a property.
+    /// Read the value of the given property. Tries to convert the value to the given
+    /// format `T` if it does not match.
+    ///
+    /// Will return `Err` If the format `T` doesn't match with the internal format of
+    /// the property and it also fails to convert to `T`.
     pub fn get_property<T: GetData>(&self, name: &str) -> Result<T> {
         let name = CString::new(name)?;
 
@@ -341,10 +408,24 @@ impl Mpv {
         })
     }
 
-    /// Internal time in microseconds, this has an arbitrary offset, and will never go backwards.
+    /// Return the internal time in nanoseconds. This has an arbitrary start
+    /// offset, but will never wrap or go backwards.
     ///
-    /// This can be called at any time, even if it was stated that no API function should be called.
-    pub fn get_internal_time(&self) -> i64 {
+    /// Note that this is always the real time, and doesn't necessarily have to
+    /// do with playback time. For example, playback could go faster or slower
+    /// due to playback speed, or due to playback being paused. Use the
+    /// "time-pos" property instead to get the playback status.
+    ///
+    /// Unlike other libmpv APIs, this can be called at absolutely any time
+    /// (even within wakeup callbacks), as long as the context is valid.
+    ///
+    /// Safe to be called from mpv render API threads.
+    pub fn get_time_ns(&self) -> i64 {
+        unsafe { libmpv2_sys::mpv_get_time_ns(self.ctx.as_ptr()) }
+    }
+
+    /// Same as get_time_ns but in microseconds.
+    pub fn get_time_us(&self) -> i64 {
         unsafe { libmpv2_sys::mpv_get_time_us(self.ctx.as_ptr()) }
     }
 }

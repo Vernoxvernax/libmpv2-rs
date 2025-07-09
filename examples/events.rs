@@ -17,7 +17,7 @@ fn main() -> Result<()> {
     .unwrap();
     mpv.set_property("volume", 15)?;
 
-    let mut ev_ctx = EventContext::new(mpv.ctx);
+    let mut ev_ctx = mpv.create_event_context();
     ev_ctx.disable_deprecated_events()?;
     ev_ctx.observe_property("volume", Format::Int64, 0)?;
     ev_ctx.observe_property("demuxer-cache-state", Format::String, 0)?;
@@ -35,25 +35,27 @@ fn main() -> Result<()> {
             // Trigger `Event::EndFile`.
             mpv.command("playlist-next", &["force"]).unwrap();
         });
-        scope.spawn(move |_| loop {
-            let ev = ev_ctx.wait_event(600.).unwrap_or(Err(Error::Null));
+        scope.spawn(move |_| {
+            loop {
+                let ev = ev_ctx.wait_event(600.).unwrap_or(Err(Error::Null));
 
-            match ev {
-                Ok(Event::EndFile(r)) => {
-                    println!("Exiting! Reason: {:?}", r);
-                    break;
-                }
+                match ev {
+                    Ok(Event::EndFile(r)) => {
+                        println!("Exiting! Reason: {:?}", r);
+                        break;
+                    }
 
-                Ok(Event::PropertyChange {
-                    name: "demuxer-cache-state",
-                    change: PropertyData::Str(r),
-                    ..
-                }) => {
-                    let ranges = seekable_ranges(r);
-                    println!("Seekable ranges updated: {:?}", ranges);
+                    Ok(Event::PropertyChange {
+                        name: "demuxer-cache-state",
+                        change: PropertyData::Str(r),
+                        ..
+                    }) => {
+                        let ranges = seekable_ranges(r);
+                        println!("Seekable ranges updated: {:?}", ranges);
+                    }
+                    Ok(e) => println!("Event triggered: {:?}", e),
+                    Err(e) => println!("Event errored: {:?}", e),
                 }
-                Ok(e) => println!("Event triggered: {:?}", e),
-                Err(e) => println!("Event errored: {:?}", e),
             }
         });
     })

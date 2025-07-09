@@ -4,6 +4,10 @@
 
 - Expose `mpv_render_context_report_swap` @tymmesyde
 - [breaking] Removed `mpv_node` support. Use strings and parse as JSON if needed
+- [breaking] Removed `EventContext::new`. Use `mpv.create_event_context()` instead.
+- [breaking] Changed `Mpv::load_config` to `MpvInitializer::load_config`.
+- [breaking] Renamed `get_internal_time` to `get_time_us`
+- Expose `get_time_ns`
 
 ## Version 4.1.0
 

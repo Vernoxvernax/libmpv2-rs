@@ -1,8 +1,7 @@
 use crate::{mpv::mpv_err, *};
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::os::raw as ctype;
-use std::ptr::NonNull;
 use std::slice;
 
 /// An `Event`'s ID.
@@ -44,20 +43,22 @@ impl<'a> PropertyData<'a> {
     // `client.h`
     unsafe fn from_raw(format: MpvFormat, ptr: *mut ctype::c_void) -> Result<PropertyData<'a>> {
         assert!(!ptr.is_null());
-        match format {
-            mpv_format::Flag => Ok(PropertyData::Flag(*(ptr as *mut bool))),
-            mpv_format::String => {
-                let char_ptr = *(ptr as *mut *mut ctype::c_char);
-                Ok(PropertyData::Str(mpv_cstr_to_str!(char_ptr)?))
+        unsafe {
+            match format {
+                mpv_format::Flag => Ok(PropertyData::Flag(*(ptr as *mut bool))),
+                mpv_format::String => {
+                    let char_ptr = *(ptr as *mut *mut ctype::c_char);
+                    Ok(PropertyData::Str(mpv_cstr_to_str!(char_ptr)?))
+                }
+                mpv_format::OsdString => {
+                    let char_ptr = *(ptr as *mut *mut ctype::c_char);
+                    Ok(PropertyData::OsdStr(mpv_cstr_to_str!(char_ptr)?))
+                }
+                mpv_format::Double => Ok(PropertyData::Double(*(ptr as *mut f64))),
+                mpv_format::Int64 => Ok(PropertyData::Int64(*(ptr as *mut i64))),
+                mpv_format::None => unreachable!(),
+                _ => unimplemented!(),
             }
-            mpv_format::OsdString => {
-                let char_ptr = *(ptr as *mut *mut ctype::c_char);
-                Ok(PropertyData::OsdStr(mpv_cstr_to_str!(char_ptr)?))
-            }
-            mpv_format::Double => Ok(PropertyData::Double(*(ptr as *mut f64))),
-            mpv_format::Int64 => Ok(PropertyData::Int64(*(ptr as *mut i64))),
-            mpv_format::None => unreachable!(),
-            _ => unimplemented!(),
         }
     }
 }
@@ -112,29 +113,33 @@ unsafe extern "C" fn wu_wrapper<F: Fn() + Send + 'static>(ctx: *mut c_void) {
         panic!("ctx for wakeup wrapper is NULL");
     }
 
-    (*(ctx as *mut F))();
+    unsafe {
+        (*(ctx as *mut F))();
+    }
 }
 
 /// Context to listen to events.
-pub struct EventContext {
-    ctx: NonNull<libmpv2_sys::mpv_handle>,
+pub struct EventContext<'parent> {
+    mpv: &'parent Mpv,
     wakeup_callback_cleanup: Option<Box<dyn FnOnce()>>,
 }
 
-unsafe impl Send for EventContext {}
+unsafe impl Send for EventContext<'_> {}
 
-impl EventContext {
-    pub fn new(ctx: NonNull<libmpv2_sys::mpv_handle>) -> Self {
+impl Mpv {
+    pub fn create_event_context(&self) -> EventContext<'_> {
         EventContext {
-            ctx,
+            mpv: self,
             wakeup_callback_cleanup: None,
         }
     }
+}
 
+impl<'parent> EventContext<'parent> {
     /// Enable an event.
     pub fn enable_event(&self, ev: events::EventId) -> Result<()> {
         mpv_err((), unsafe {
-            libmpv2_sys::mpv_request_event(self.ctx.as_ptr(), ev, 1)
+            libmpv2_sys::mpv_request_event(self.mpv.ctx.as_ptr(), ev, 1)
         })
     }
 
@@ -149,7 +154,7 @@ impl EventContext {
     /// Disable an event.
     pub fn disable_event(&self, ev: events::EventId) -> Result<()> {
         mpv_err((), unsafe {
-            libmpv2_sys::mpv_request_event(self.ctx.as_ptr(), ev, 0)
+            libmpv2_sys::mpv_request_event(self.mpv.ctx.as_ptr(), ev, 0)
         })
     }
 
@@ -173,7 +178,7 @@ impl EventContext {
         let name = CString::new(name)?;
         mpv_err((), unsafe {
             libmpv2_sys::mpv_observe_property(
-                self.ctx.as_ptr(),
+                self.mpv.ctx.as_ptr(),
                 id,
                 name.as_ptr(),
                 format.as_mpv_format() as _,
@@ -184,7 +189,7 @@ impl EventContext {
     /// Unobserve any property associated with `id`.
     pub fn unobserve_property(&self, id: u64) -> Result<()> {
         mpv_err((), unsafe {
-            libmpv2_sys::mpv_unobserve_property(self.ctx.as_ptr(), id)
+            libmpv2_sys::mpv_unobserve_property(self.mpv.ctx.as_ptr(), id)
         })
     }
 
@@ -197,7 +202,7 @@ impl EventContext {
     /// `MPV_EVENT_GET_PROPERTY_REPLY`, `MPV_EVENT_SET_PROPERTY_REPLY`, `MPV_EVENT_COMMAND_REPLY`,
     /// or `MPV_EVENT_PROPERTY_CHANGE` event failed, or if `MPV_EVENT_END_FILE` reported an error.
     pub fn wait_event(&mut self, timeout: f64) -> Option<Result<Event<'_>>> {
-        let event = unsafe { *libmpv2_sys::mpv_wait_event(self.ctx.as_ptr(), timeout) };
+        let event = unsafe { *libmpv2_sys::mpv_wait_event(self.mpv.ctx.as_ptr(), timeout) };
         if event.event_id != mpv_event_id::None {
             if let Err(e) = mpv_err((), event.error) {
                 return Some(Err(e));
@@ -300,31 +305,38 @@ impl EventContext {
         }
     }
 
-    /// Set a custom function that should be called when there are new events. Use this if
-    /// blocking in [wait_event](#method.wait_event) to wait for new events is not feasible.
+    /// Set a custom function that should be called when there are new events.
+    /// Use this if blocking in [wait_event](#method.wait_event) to wait for new
+    /// events is not feasible.
     ///
-    /// Keep in mind that the callback will be called from foreign threads. You must not make
-    /// any assumptions of the environment, and you must return as soon as possible (i.e. no
-    /// long blocking waits). Exiting the callback through any other means than a normal return
-    /// is forbidden (no throwing exceptions, no `longjmp()` calls). You must not change any
+    /// Keep in mind that the callback will be called from foreign threads. You
+    /// must not make any assumptions of the environment, and you must return as
+    /// soon as possible (i.e. no long blocking waits). Exiting the callback
+    /// through any other means than a normal return is forbidden
+    /// (no throwing exceptions, no `longjmp()` calls). You must not change any
     /// local thread state (such as the C floating point environment).
     ///
-    /// You are not allowed to call any client API functions inside of the callback. In
-    /// particular, you should not do any processing in the callback, but wake up another
-    /// thread that does all the work. The callback is meant strictly for notification only,
-    /// and is called from arbitrary core parts of the player, that make no considerations for
-    /// reentrant API use or allowing the callee to spend a lot of time doing other things.
-    /// Keep in mind that it’s also possible that the callback is called from a thread while a
-    /// mpv API function is called (i.e. it can be reentrant).
+    /// You are not allowed to call any client API functions inside of the
+    /// callback. In particular, you should not do any processing in the
+    /// callback, but wake up another thread that does all the work. The
+    /// callback is meant strictly for notification only, and is called from
+    /// arbitrary core parts of the player, that make no considerations for
+    /// reentrant API use or allowing the callee to spend a lot of time doing
+    /// other things. Keep in mind that it’s also possible that the callback is
+    /// called from a thread while a mpv API function is called
+    /// (i.e. it can be reentrant).
     ///
-    /// In general, the client API expects you to call [wait_event](#method.wait_event) to receive
-    /// notifications, and the wakeup callback is merely a helper utility to make this easier in
-    /// certain situations. Note that it’s possible that there’s only one wakeup callback
-    /// invocation for multiple events. You should call [wait_event](#method.wait_event) with no timeout until
-    /// `None` is returned, at which point the event queue is empty.
+    /// In general, the client API expects you to call
+    /// [wait_event](#method.wait_event) to receive notifications, and the
+    /// wakeup callback is merely a helper utility to make this easier in
+    /// certain situations. Note that it’s possible that there’s only one wakeup
+    /// callback invocation for multiple events. You should call
+    /// [wait_event](#method.wait_event) with no timeout until `None` is
+    /// returned, at which point the event queue is empty.
     ///
-    /// If you actually want to do processing in a callback, spawn a thread that does nothing but
-    /// call [wait_event](#method.wait_event) in a loop and dispatches the result to a callback.
+    /// If you actually want to do processing in a callback, spawn a thread that
+    /// does nothing but call [wait_event](#method.wait_event) in a loop and
+    /// dispatches the result to a callback.
     ///
     /// Only one wakeup callback can be set.
     pub fn set_wakeup_callback<F: Fn() + Send + 'static>(&mut self, callback: F) {
@@ -337,7 +349,7 @@ impl EventContext {
         }) as Box<dyn FnOnce()>);
         unsafe {
             libmpv2_sys::mpv_set_wakeup_callback(
-                self.ctx.as_ptr(),
+                self.mpv.ctx.as_ptr(),
                 Some(wu_wrapper::<F>),
                 raw_callback as *mut c_void,
             );
@@ -345,7 +357,7 @@ impl EventContext {
     }
 }
 
-impl Drop for EventContext {
+impl Drop for EventContext<'_> {
     fn drop(&mut self) {
         if let Some(wakeup_callback_cleanup) = self.wakeup_callback_cleanup.take() {
             wakeup_callback_cleanup();

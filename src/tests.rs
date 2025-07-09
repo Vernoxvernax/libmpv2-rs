@@ -1,4 +1,4 @@
-use crate::events::{Event, EventContext, PropertyData};
+use crate::events::{Event, PropertyData};
 use crate::*;
 
 use std::thread;
@@ -67,7 +67,7 @@ macro_rules! assert_event_occurs {
 #[test]
 fn events() {
     let mpv = Mpv::new().unwrap();
-    let mut ev_ctx = EventContext::new(mpv.ctx);
+    let mut ev_ctx = mpv.create_event_context();
     ev_ctx.disable_deprecated_events().unwrap();
 
     ev_ctx.observe_property("volume", Format::Int64, 0).unwrap();
@@ -146,4 +146,15 @@ fn events() {
     assert_event_occurs!(ev_ctx, 10., Ok(Event::EndFile(mpv_end_file_reason::Eof)));
     assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
     assert!(ev_ctx.wait_event(3.).is_none());
+}
+
+#[test]
+fn config_file() {
+    let mpv = Mpv::with_initializer(|init| {
+        init.load_config("test-data/mpv.conf").unwrap();
+
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(mpv.get_property::<i64>("volume").unwrap(), 50);
 }
