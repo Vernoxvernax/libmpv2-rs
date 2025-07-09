@@ -15,7 +15,7 @@
 
 - [X] `mpv_load_config_file`
 
-- [ ] `mpv_get_time_ns`
+- [X] `mpv_get_time_ns`
 - [X] `mpv_get_time_us`
 
 - [ ] `mpv_free_node_contents`
