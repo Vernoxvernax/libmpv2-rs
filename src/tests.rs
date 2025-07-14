@@ -66,13 +66,11 @@ macro_rules! assert_event_occurs {
 
 #[test]
 fn events() {
-    let mpv = Mpv::new().unwrap();
-    let mut ev_ctx = mpv.create_event_context();
-    ev_ctx.disable_deprecated_events().unwrap();
+    let mut mpv = Mpv::new().unwrap();
+    mpv.disable_deprecated_events().unwrap();
 
-    ev_ctx.observe_property("volume", Format::Int64, 0).unwrap();
-    ev_ctx
-        .observe_property("media-title", Format::String, 1)
+    mpv.observe_property("volume", Format::Int64, 0).unwrap();
+    mpv.observe_property("media-title", Format::String, 1)
         .unwrap();
 
     mpv.set_property("vo", "null").unwrap();
@@ -81,7 +79,7 @@ fn events() {
     mpv.set_property("speed", 100).unwrap();
 
     assert_event_occurs!(
-        ev_ctx,
+        mpv,
         3.,
         Ok(Event::PropertyChange {
             name: "volume",
@@ -92,7 +90,7 @@ fn events() {
 
     mpv.set_property("volume", 0).unwrap();
     assert_event_occurs!(
-        ev_ctx,
+        mpv,
         10.,
         Ok(Event::PropertyChange {
             name: "volume",
@@ -100,12 +98,12 @@ fn events() {
             reply_userdata: 0,
         })
     );
-    assert!(ev_ctx.wait_event(3.).is_none());
+    assert!(mpv.wait_event(3.).is_none());
     mpv.command("loadfile", &["test-data/jellyfish.mp4", "append-play"])
         .unwrap();
-    assert_event_occurs!(ev_ctx, 10., Ok(Event::StartFile));
+    assert_event_occurs!(mpv, 10., Ok(Event::StartFile));
     assert_event_occurs!(
-        ev_ctx,
+        mpv,
         10.,
         Ok(Event::PropertyChange {
             name: "media-title",
@@ -113,21 +111,21 @@ fn events() {
             reply_userdata: 1,
         })
     );
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::FileLoaded));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::VideoReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::FileLoaded));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::VideoReconfig));
 
     mpv.command("loadfile", &["test-data/speech_12kbps_mb.wav", "replace"])
         .unwrap();
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::VideoReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::VideoReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::EndFile(mpv_end_file_reason::Stop)));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::StartFile));
+    assert_event_occurs!(mpv, 3., Ok(Event::VideoReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::VideoReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::EndFile(mpv_end_file_reason::Stop)));
+    assert_event_occurs!(mpv, 3., Ok(Event::StartFile));
     assert_event_occurs!(
-        ev_ctx,
+        mpv,
         3.,
         Ok(Event::PropertyChange {
             name: "media-title",
@@ -135,17 +133,17 @@ fn events() {
             reply_userdata: 1,
         })
     );
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::VideoReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::FileLoaded));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::PlaybackRestart));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert_event_occurs!(ev_ctx, 10., Ok(Event::EndFile(mpv_end_file_reason::Eof)));
-    assert_event_occurs!(ev_ctx, 3., Ok(Event::AudioReconfig));
-    assert!(ev_ctx.wait_event(3.).is_none());
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::VideoReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::FileLoaded));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 3., Ok(Event::PlaybackRestart));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert_event_occurs!(mpv, 10., Ok(Event::EndFile(mpv_end_file_reason::Eof)));
+    assert_event_occurs!(mpv, 3., Ok(Event::AudioReconfig));
+    assert!(mpv.wait_event(3.).is_none());
 }
 
 #[test]

@@ -118,28 +118,11 @@ unsafe extern "C" fn wu_wrapper<F: Fn() + Send + 'static>(ctx: *mut c_void) {
     }
 }
 
-/// Context to listen to events.
-pub struct EventContext<'parent> {
-    mpv: &'parent Mpv,
-    wakeup_callback_cleanup: Option<Box<dyn FnOnce()>>,
-}
-
-unsafe impl Send for EventContext<'_> {}
-
 impl Mpv {
-    pub fn create_event_context(&self) -> EventContext<'_> {
-        EventContext {
-            mpv: self,
-            wakeup_callback_cleanup: None,
-        }
-    }
-}
-
-impl<'parent> EventContext<'parent> {
     /// Enable an event.
     pub fn enable_event(&self, ev: events::EventId) -> Result<()> {
         mpv_err((), unsafe {
-            libmpv2_sys::mpv_request_event(self.mpv.ctx.as_ptr(), ev, 1)
+            libmpv2_sys::mpv_request_event(self.ctx.as_ptr(), ev, 1)
         })
     }
 
@@ -154,7 +137,7 @@ impl<'parent> EventContext<'parent> {
     /// Disable an event.
     pub fn disable_event(&self, ev: events::EventId) -> Result<()> {
         mpv_err((), unsafe {
-            libmpv2_sys::mpv_request_event(self.mpv.ctx.as_ptr(), ev, 0)
+            libmpv2_sys::mpv_request_event(self.ctx.as_ptr(), ev, 0)
         })
     }
 
@@ -178,7 +161,7 @@ impl<'parent> EventContext<'parent> {
         let name = CString::new(name)?;
         mpv_err((), unsafe {
             libmpv2_sys::mpv_observe_property(
-                self.mpv.ctx.as_ptr(),
+                self.ctx.as_ptr(),
                 id,
                 name.as_ptr(),
                 format.as_mpv_format() as _,
@@ -189,7 +172,7 @@ impl<'parent> EventContext<'parent> {
     /// Unobserve any property associated with `id`.
     pub fn unobserve_property(&self, id: u64) -> Result<()> {
         mpv_err((), unsafe {
-            libmpv2_sys::mpv_unobserve_property(self.mpv.ctx.as_ptr(), id)
+            libmpv2_sys::mpv_unobserve_property(self.ctx.as_ptr(), id)
         })
     }
 
@@ -202,7 +185,7 @@ impl<'parent> EventContext<'parent> {
     /// `MPV_EVENT_GET_PROPERTY_REPLY`, `MPV_EVENT_SET_PROPERTY_REPLY`, `MPV_EVENT_COMMAND_REPLY`,
     /// or `MPV_EVENT_PROPERTY_CHANGE` event failed, or if `MPV_EVENT_END_FILE` reported an error.
     pub fn wait_event(&mut self, timeout: f64) -> Option<Result<Event<'_>>> {
-        let event = unsafe { *libmpv2_sys::mpv_wait_event(self.mpv.ctx.as_ptr(), timeout) };
+        let event = unsafe { *libmpv2_sys::mpv_wait_event(self.ctx.as_ptr(), timeout) };
         if event.event_id != mpv_event_id::None {
             if let Err(e) = mpv_err((), event.error) {
                 return Some(Err(e));
@@ -349,18 +332,10 @@ impl<'parent> EventContext<'parent> {
         }) as Box<dyn FnOnce()>);
         unsafe {
             libmpv2_sys::mpv_set_wakeup_callback(
-                self.mpv.ctx.as_ptr(),
+                self.ctx.as_ptr(),
                 Some(wu_wrapper::<F>),
                 raw_callback as *mut c_void,
             );
-        }
-    }
-}
-
-impl Drop for EventContext<'_> {
-    fn drop(&mut self) {
-        if let Some(wakeup_callback_cleanup) = self.wakeup_callback_cleanup.take() {
-            wakeup_callback_cleanup();
         }
     }
 }

@@ -17,10 +17,11 @@ fn main() -> Result<()> {
     .unwrap();
     mpv.set_property("volume", 15)?;
 
-    let mut ev_ctx = mpv.create_event_context();
-    ev_ctx.disable_deprecated_events()?;
-    ev_ctx.observe_property("volume", Format::Int64, 0)?;
-    ev_ctx.observe_property("demuxer-cache-state", Format::String, 0)?;
+    mpv.disable_deprecated_events()?;
+    mpv.observe_property("volume", Format::Int64, 0)?;
+    mpv.observe_property("demuxer-cache-state", Format::String, 0)?;
+
+    let mut mpv_client = mpv.create_client(None)?;
 
     crossbeam::scope(|scope| {
         scope.spawn(|_| {
@@ -35,9 +36,9 @@ fn main() -> Result<()> {
             // Trigger `Event::EndFile`.
             mpv.command("playlist-next", &["force"]).unwrap();
         });
-        scope.spawn(move |_| {
+        scope.spawn(|_| {
             loop {
-                let ev = ev_ctx.wait_event(600.).unwrap_or(Err(Error::Null));
+                let ev = mpv_client.wait_event(600.).unwrap_or(Err(Error::Null));
 
                 match ev {
                     Ok(Event::EndFile(r)) => {

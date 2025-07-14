@@ -10,7 +10,7 @@
 - [X] `mpv_initialize`
 - [ ] `mpv_destroy`
 - [X] `mpv_terminate_destroy` (not public, internal use only)
-- [ ] `mpv_create_client`
+- [X] `mpv_create_client`
 - [ ] `mpv_create_weak_client`
 
 - [X] `mpv_load_config_file`

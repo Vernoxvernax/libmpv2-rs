@@ -44,8 +44,7 @@ fn main() {
         .register_custom_event::<UserEvent>()
         .unwrap();
 
-    let mut ev_ctx = mpv.create_event_context();
-    ev_ctx.disable_deprecated_events().unwrap();
+    mpv.disable_deprecated_events().unwrap();
 
     let event_sender = event_subsystem.event_sender();
     render_context.set_update_callback(move || {
@@ -55,7 +54,7 @@ fn main() {
     });
 
     let event_sender = event_subsystem.event_sender();
-    ev_ctx.set_wakeup_callback(move || {
+    mpv.set_wakeup_callback(move || {
         event_sender
             .push_custom_event(UserEvent::MpvEventAvailable)
             .unwrap();
@@ -76,7 +75,7 @@ fn main() {
                         window.gl_swap_window();
                     }
                     UserEvent::MpvEventAvailable => loop {
-                        match ev_ctx.wait_event(0.0) {
+                        match mpv.wait_event(0.0) {
                             Some(Ok(libmpv2::events::Event::EndFile(_))) => {
                                 break 'render;
                             }

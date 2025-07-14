@@ -244,6 +244,7 @@ impl MpvInitializer {
 pub struct Mpv {
     /// The handle to the mpv core
     pub ctx: NonNull<libmpv2_sys::mpv_handle>,
+    wakeup_callback_cleanup: Option<Box<dyn FnOnce()>>,
     #[cfg(feature = "protocols")]
     protocols_guard: AtomicBool,
 }
@@ -253,8 +254,12 @@ unsafe impl Sync for Mpv {}
 
 impl Drop for Mpv {
     fn drop(&mut self) {
+        if let Some(wakeup_callback_cleanup) = self.wakeup_callback_cleanup.take() {
+            wakeup_callback_cleanup();
+        }
+
         unsafe {
-            libmpv2_sys::mpv_terminate_destroy(self.ctx.as_ptr());
+            libmpv2_sys::mpv_destroy(self.ctx.as_ptr());
         }
     }
 }
@@ -353,6 +358,29 @@ impl Mpv {
 
         Ok(Mpv {
             ctx,
+            wakeup_callback_cleanup: None,
+            #[cfg(feature = "protocols")]
+            protocols_guard: AtomicBool::new(false),
+        })
+    }
+
+    pub fn create_client(&self, name: Option<&str>) -> Result<Mpv> {
+        let mpv_handle = unsafe {
+            libmpv2_sys::mpv_create_client(
+                self.ctx.as_ptr(),
+                if let Some(name) = name {
+                    CString::new(name)?.as_ptr()
+                } else {
+                    ptr::null()
+                },
+            )
+        };
+
+        let ctx = unsafe { NonNull::new_unchecked(mpv_handle) };
+
+        Ok(Mpv {
+            ctx,
+            wakeup_callback_cleanup: None,
             #[cfg(feature = "protocols")]
             protocols_guard: AtomicBool::new(false),
         })
