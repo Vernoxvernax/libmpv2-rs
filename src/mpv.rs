@@ -284,8 +284,8 @@ impl Mpv {
     /// ```
     /// # use libmpv2::Mpv;
     /// Mpv::with_initializer(|init| {
-    ///     init.set_option("config-dir", "my-path")?;
-    ///     init.set_option("config", "yes")?;
+    ///     init.set_option("config-dir", "test-data")?;
+    ///     init.set_option("config", "mpv.conf")?;
     ///     Ok(())
     /// });
     /// ```
