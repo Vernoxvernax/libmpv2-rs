@@ -9,6 +9,8 @@
 - [breaking] Renamed `get_internal_time` to `get_time_us`
 - Expose `mpv_get_time_ns`
 - Expose `mpv_create_client`
+- [breaking] Removed `ProtocolContext`. Use `Protocol` instead.
+- [breaking] Removed `protocol` feature flag.
 
 ## Version 4.1.0
 

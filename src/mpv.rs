@@ -10,8 +10,6 @@ mod errors;
 
 /// Event handling
 pub mod events;
-/// Custom protocols (`protocol://$url`) for playback
-#[cfg(feature = "protocols")]
 pub mod protocol;
 /// Custom rendering
 #[cfg(feature = "render")]
@@ -25,7 +23,6 @@ use std::{
     mem::MaybeUninit,
     ops::Deref,
     ptr::{self, NonNull},
-    sync::atomic::AtomicBool,
 };
 
 fn mpv_err<T>(ret: T, err: ctype::c_int) -> Result<T> {
@@ -245,8 +242,6 @@ pub struct Mpv {
     /// The handle to the mpv core
     pub ctx: NonNull<libmpv2_sys::mpv_handle>,
     wakeup_callback_cleanup: Option<Box<dyn FnOnce()>>,
-    #[cfg(feature = "protocols")]
-    protocols_guard: AtomicBool,
 }
 
 unsafe impl Send for Mpv {}
@@ -359,8 +354,6 @@ impl Mpv {
         Ok(Mpv {
             ctx,
             wakeup_callback_cleanup: None,
-            #[cfg(feature = "protocols")]
-            protocols_guard: AtomicBool::new(false),
         })
     }
 
@@ -381,8 +374,6 @@ impl Mpv {
         Ok(Mpv {
             ctx,
             wakeup_callback_cleanup: None,
-            #[cfg(feature = "protocols")]
-            protocols_guard: AtomicBool::new(false),
         })
     }
 

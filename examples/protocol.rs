@@ -6,22 +6,15 @@ use std::{
     time::Duration,
 };
 
-#[cfg(all(not(test), not(feature = "protocols")))]
-compile_error!("The feature `protocols` needs to be enabled for this example`");
+use libmpv2::{Mpv, protocol::Protocol};
 
-#[cfg(feature = "protocols")]
 fn main() {
-    use libmpv2::{protocol::*, *};
-
-    let path = format!(
-        "filereader://{}",
-        env::args()
-            .nth(1)
-            .expect("Expected path to local media as argument, found nil.")
-    );
+    let mpv = Mpv::new().unwrap();
+    mpv.set_property("volume", 25).unwrap();
 
     let protocol = unsafe {
         Protocol::new(
+            &mpv,
             "filereader".into(),
             (),
             open,
@@ -32,13 +25,49 @@ fn main() {
         )
     };
 
-    let mpv = Mpv::new().unwrap();
-    mpv.set_property("volume", 25).unwrap();
+    let protocol2 = unsafe {
+        Protocol::new(
+            &mpv,
+            "filereader2".into(),
+            (),
+            open2,
+            close,
+            read,
+            Some(seek),
+            Some(size),
+        )
+    };
 
-    let proto_ctx = mpv.create_protocol_context();
-    proto_ctx.register(protocol).unwrap();
+    protocol.register().unwrap();
+    protocol2.register().unwrap();
 
-    mpv.command("loadfile", &[&path, "append-play"]).unwrap();
+    mpv.command(
+        "loadfile",
+        &[
+            &format!(
+                "filereader://{}",
+                env::args()
+                    .nth(1)
+                    .expect("Expected path to local media as argument, found nil.")
+            ),
+            "append-play",
+        ],
+    )
+    .unwrap();
+
+    mpv.command(
+        "loadfile",
+        &[
+            &format!(
+                "filereader2://{}",
+                env::args()
+                    .nth(1)
+                    .expect("Expected path to local media as argument, found nil.")
+            ),
+            "append-play",
+        ],
+    )
+    .unwrap();
 
     thread::sleep(Duration::from_secs(10));
 
@@ -50,6 +79,14 @@ fn main() {
 fn open(_: &mut (), uri: &str) -> File {
     // Open the file, and strip the `filereader://` part
     let ret = File::open(&uri[13..]).unwrap();
+
+    println!("Opened file[{}], ready for orders o7", &uri[13..]);
+    ret
+}
+
+fn open2(_: &mut (), uri: &str) -> File {
+    // Open the file, and strip the `filereader://` part
+    let ret = File::open(&uri[14..]).unwrap();
 
     println!("Opened file[{}], ready for orders o7", &uri[13..]);
     ret

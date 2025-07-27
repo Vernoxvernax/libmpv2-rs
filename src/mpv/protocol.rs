@@ -6,29 +6,6 @@ use std::os::raw as ctype;
 use std::panic;
 use std::panic::RefUnwindSafe;
 use std::slice;
-use std::sync::{Mutex, atomic::Ordering};
-
-impl Mpv {
-    /// Create a context with which custom protocols can be registered.
-    ///
-    /// # Panics
-    /// Panics if a context already exists
-    pub fn create_protocol_context<T, U>(&self) -> ProtocolContext<'_, T, U>
-    where
-        T: RefUnwindSafe,
-        U: RefUnwindSafe,
-    {
-        match self.protocols_guard.compare_exchange(
-            false,
-            true,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => ProtocolContext::new(self),
-            Err(_) => panic!("A protocol context already exists"),
-        }
-    }
-}
 
 /// Return a persistent `T` that is passed to all other `Stream*` functions, panic on errors.
 pub type StreamOpen<T, U> = fn(&mut U, &str) -> T;
@@ -159,44 +136,17 @@ struct ProtocolData<T, U> {
     size_fn: Option<StreamSize<T>>,
 }
 
-/// This context holds state relevant to custom protocols.
-/// It is created by calling `Mpv::create_protocol_context`.
-pub struct ProtocolContext<'parent, T: RefUnwindSafe, U: RefUnwindSafe> {
-    mpv: &'parent Mpv,
-    protocols: Mutex<Vec<Protocol<T, U>>>,
-}
-
-unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Send for ProtocolContext<'parent, T, U> {}
-unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Sync for ProtocolContext<'parent, T, U> {}
-
-impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> ProtocolContext<'parent, T, U> {
-    fn new(mpv: &'parent Mpv) -> ProtocolContext<'parent, T, U> {
-        ProtocolContext {
-            mpv,
-            protocols: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// Register a custom `Protocol`. Once a protocol has been registered, it lives as long as
-    /// `Mpv`.
-    ///
-    /// Returns `Error::Mpv(MpvError::InvalidParameter)` if a protocol with the same name has
-    /// already been registered.
-    pub fn register(&self, protocol: Protocol<T, U>) -> Result<()> {
-        let mut protocols = self.protocols.lock().unwrap();
-        protocol.register(self.mpv.ctx.as_ptr())?;
-        protocols.push(protocol);
-        Ok(())
-    }
-}
-
 /// `Protocol` holds all state used by a custom protocol.
-pub struct Protocol<T: Sized + RefUnwindSafe, U: RefUnwindSafe> {
+pub struct Protocol<'parent, T: Sized + RefUnwindSafe, U: RefUnwindSafe> {
+    mpv: &'parent Mpv,
     name: String,
     data: *mut ProtocolData<T, U>,
 }
 
-impl<T: RefUnwindSafe, U: RefUnwindSafe> Protocol<T, U> {
+unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Send for Protocol<'parent, T, U> {}
+unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Sync for Protocol<'parent, T, U> {}
+
+impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Protocol<'parent, T, U> {
     /// `name` is the prefix of the protocol, e.g. `name://path`.
     ///
     /// `user_data` is data that will be passed to `open_fn`.
@@ -205,6 +155,7 @@ impl<T: RefUnwindSafe, U: RefUnwindSafe> Protocol<T, U> {
     /// Do not call libmpv functions in any supplied function.
     /// All panics of the provided functions are catched and can be used as generic error returns.
     pub unsafe fn new(
+        mpv: &Mpv,
         name: String,
         user_data: U,
         open_fn: StreamOpen<T, U>,
@@ -226,16 +177,21 @@ impl<T: RefUnwindSafe, U: RefUnwindSafe> Protocol<T, U> {
             size_fn,
         }));
 
-        Protocol { name, data }
+        Protocol { mpv, name, data }
     }
 
-    fn register(&self, ctx: *mut libmpv2_sys::mpv_handle) -> Result<()> {
+    /// This will register the `Protocol`, and invoke the given callbacks if an
+    /// URI with the matching protocol prefix is opened.
+    ///
+    /// Will return `Err` if a `Protocol` with the same name is already
+    /// registered
+    pub fn register(&self) -> Result<()> {
         let name = CString::new(&self.name[..])?;
         unsafe {
             mpv_err(
                 (),
                 libmpv2_sys::mpv_stream_cb_add_ro(
-                    ctx,
+                    self.mpv.ctx.as_ptr(),
                     name.as_ptr(),
                     self.data as *mut _,
                     Some(open_wrapper::<T, U>),
