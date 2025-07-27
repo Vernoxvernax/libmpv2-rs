@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## Version 5.0.0
+
 - Expose `mpv_render_context_report_swap` @tymmesyde
 - [breaking] Removed `mpv_node` support. Use strings and parse as JSON if needed
 - [breaking] Moved `EventContext` implementation into `Mpv`.
