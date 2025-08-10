@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## Version 5.0.1
+
+- Fix stream protocol overwriting cookie
+
 ## Version 5.0.0
 
 - Expose `mpv_render_context_report_swap` @tymmesyde
