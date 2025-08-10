@@ -1,5 +1,4 @@
 use std::{
-    env,
     fs::File,
     io::{Read, Seek, SeekFrom},
     mem, thread,
@@ -25,31 +24,12 @@ fn main() {
         )
     };
 
-    let protocol2 = unsafe {
-        Protocol::new(
-            &mpv,
-            "filereader2".into(),
-            (),
-            open2,
-            close,
-            read,
-            Some(seek),
-            Some(size),
-        )
-    };
-
     protocol.register().unwrap();
-    protocol2.register().unwrap();
 
     mpv.command(
         "loadfile",
         &[
-            &format!(
-                "filereader://{}",
-                env::args()
-                    .nth(1)
-                    .expect("Expected path to local media as argument, found nil.")
-            ),
+            &format!("filereader://{}", "test-data/jellyfish.mp4"),
             "append-play",
         ],
     )
@@ -58,16 +38,24 @@ fn main() {
     mpv.command(
         "loadfile",
         &[
-            &format!(
-                "filereader2://{}",
-                env::args()
-                    .nth(1)
-                    .expect("Expected path to local media as argument, found nil.")
-            ),
-            "append-play",
+            &format!("filereader://{}", "test-data/speech_12kbps_mb.wav"),
+            "append",
         ],
     )
     .unwrap();
+
+    mpv.command(
+        "loadfile",
+        &[
+            &format!("filereader://{}", "test-data/jellyfish.mp4"),
+            "append",
+        ],
+    )
+    .unwrap();
+
+    thread::sleep(Duration::from_secs(10));
+
+    mpv.command("seek", &["15"]).unwrap();
 
     thread::sleep(Duration::from_secs(10));
 
@@ -79,14 +67,6 @@ fn main() {
 fn open(_: &mut (), uri: &str) -> File {
     // Open the file, and strip the `filereader://` part
     let ret = File::open(&uri[13..]).unwrap();
-
-    println!("Opened file[{}], ready for orders o7", &uri[13..]);
-    ret
-}
-
-fn open2(_: &mut (), uri: &str) -> File {
-    // Open the file, and strip the `filereader://` part
-    let ret = File::open(&uri[14..]).unwrap();
 
     println!("Opened file[{}], ready for orders o7", &uri[13..]);
     ret
