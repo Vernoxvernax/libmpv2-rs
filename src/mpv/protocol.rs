@@ -26,18 +26,17 @@ unsafe extern "C" fn open_wrapper<T, U>(
 ) -> ctype::c_int
 where
     T: RefUnwindSafe,
-    U: RefUnwindSafe + Clone,
+    U: RefUnwindSafe,
 {
     // allocate memory for cookie
     let c_layout = Layout::from_size_align(mem::size_of::<T>(), mem::align_of::<T>()).unwrap();
     let new_cookie = unsafe { alloc::alloc(c_layout) as *mut T };
 
-    let protocol_data = unsafe { &*(user_data as *mut ProtocolData<T, U>) };
+    let protocol_data = unsafe { &*(user_data as *mut InitProtocolData<T, U>) };
 
     // Make a clone of the protocol data
     let protocol_data_copy = ProtocolData {
         cookie: new_cookie,
-        user_data: protocol_data.user_data.clone(),
         open_fn: protocol_data.open_fn,
         close_fn: protocol_data.close_fn,
         read_fn: protocol_data.read_fn,
@@ -58,10 +57,12 @@ where
     let ret = panic::catch_unwind(|| unsafe {
         let uri = mpv_cstr_to_str!(uri as *const _).unwrap();
 
+        let protocol_data = &mut *(user_data as *mut InitProtocolData<T, U>);
+
         // Call the users open fn and write the data to the new cookie
         ptr::write(
             (*protocol_data_raw).cookie,
-            ((*protocol_data_raw).open_fn)(&mut (*protocol_data_raw).user_data, uri),
+            ((*protocol_data_raw).open_fn)(&mut (*protocol_data).user_data, uri),
         );
     });
 
@@ -79,7 +80,7 @@ unsafe extern "C" fn read_wrapper<T, U>(
 ) -> i64
 where
     T: RefUnwindSafe,
-    U: RefUnwindSafe + Clone,
+    U: RefUnwindSafe,
 {
     let data = wrapper_cookie as *mut ProtocolData<T, U>;
 
@@ -93,7 +94,7 @@ where
 unsafe extern "C" fn seek_wrapper<T, U>(wrapper_cookie: *mut ctype::c_void, offset: i64) -> i64
 where
     T: RefUnwindSafe,
-    U: RefUnwindSafe + Clone,
+    U: RefUnwindSafe,
 {
     let data = wrapper_cookie as *mut ProtocolData<T, U>;
 
@@ -114,7 +115,7 @@ where
 unsafe extern "C" fn size_wrapper<T, U>(wrapper_cookie: *mut ctype::c_void) -> i64
 where
     T: RefUnwindSafe,
-    U: RefUnwindSafe + Clone,
+    U: RefUnwindSafe,
 {
     let data = wrapper_cookie as *mut ProtocolData<T, U>;
 
@@ -136,7 +137,7 @@ where
 extern "C" fn close_wrapper<T, U>(wrapper_cookie: *mut ctype::c_void)
 where
     T: RefUnwindSafe,
-    U: RefUnwindSafe + Clone,
+    U: RefUnwindSafe,
 {
     // Free wrapper_cookie memory
     let data = unsafe { Box::from_raw(wrapper_cookie as *mut ProtocolData<T, U>) };
@@ -145,9 +146,7 @@ where
     panic::catch_unwind(|| unsafe { ((*data).close_fn)(Box::from_raw((*data).cookie)) });
 }
 
-#[derive(Clone)]
-struct ProtocolData<T, U: Clone> {
-    cookie: *mut T,
+struct InitProtocolData<T, U> {
     user_data: U,
 
     open_fn: StreamOpen<T, U>,
@@ -157,23 +156,33 @@ struct ProtocolData<T, U: Clone> {
     size_fn: Option<StreamSize<T>>,
 }
 
-/// `Protocol` holds all state used by a custom protocol.
-pub struct Protocol<'parent, T: Sized + RefUnwindSafe, U: RefUnwindSafe + Clone> {
-    mpv: &'parent Mpv,
-    name: String,
-    data: *mut ProtocolData<T, U>,
+struct ProtocolData<T, U> {
+    cookie: *mut T,
+
+    open_fn: StreamOpen<T, U>,
+    close_fn: StreamClose<T>,
+    read_fn: StreamRead<T>,
+    seek_fn: Option<StreamSeek<T>>,
+    size_fn: Option<StreamSize<T>>,
 }
 
-unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe + Clone> Send for Protocol<'parent, T, U> {}
-unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe + Clone> Sync for Protocol<'parent, T, U> {}
+/// `Protocol` holds all state used by a custom protocol.
+pub struct Protocol<'parent, T: Sized + RefUnwindSafe, U: RefUnwindSafe> {
+    mpv: &'parent Mpv,
+    name: String,
+    data: *mut InitProtocolData<T, U>,
+}
 
-impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe + Clone> Drop for Protocol<'parent, T, U> {
+unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Send for Protocol<'parent, T, U> {}
+unsafe impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Sync for Protocol<'parent, T, U> {}
+
+impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Drop for Protocol<'parent, T, U> {
     fn drop(&mut self) {
         let _ = unsafe { Box::from_raw(self.data) };
     }
 }
 
-impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe + Clone> Protocol<'parent, T, U> {
+impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe> Protocol<'parent, T, U> {
     /// `name` is the prefix of the protocol, e.g. `name://path`.
     ///
     /// `user_data` is data that will be passed to `open_fn`.
@@ -191,8 +200,7 @@ impl<'parent, T: RefUnwindSafe, U: RefUnwindSafe + Clone> Protocol<'parent, T, U
         seek_fn: Option<StreamSeek<T>>,
         size_fn: Option<StreamSize<T>>,
     ) -> Protocol<'parent, T, U> {
-        let data = Box::into_raw(Box::new(ProtocolData {
-            cookie: ptr::null::<T>() as *mut _,
+        let data = Box::into_raw(Box::new(InitProtocolData {
             user_data,
 
             open_fn,
